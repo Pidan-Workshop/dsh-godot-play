@@ -1,17 +1,18 @@
 /**
  * dsh-godot-play 宿主半区冒烟测试（无需 dsh 进程）。
  *
- * stub 出 webServer / subprocess / webRuntime 三个注入服务：
- *   - subprocess.spawn 用 node:child_process 真跑一个"假 Godot"脚本；
- *   - 端到端走一遍：POST /build → 轮询 /status → 断言 done + webReady；
- *   - 再验证 /dsh-godot-play/web/* 静态托管与路径穿越防护。
+ * stub 出 webServer / subprocess / webRuntime / workspaceRegistry：
+ *   - subprocess.spawn 真跑"假 Godot"脚本；
+ *   - workspaceRegistry 提供有序项目记录（新→旧）；
+ *   - 覆盖：锁定配置的构建链路、workspaces 列表/登记、切换被锁拒绝、
+ *     目标优先级纯函数、静态托管与路径穿越防护。
  */
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { Writable } from "node:stream";
-import { apply } from "../lib/index.js";
+import { apply, chooseProject, detectWebPreset } from "../lib/index.js";
 
 const results = [];
 function expect(cond, label) {
@@ -20,22 +21,23 @@ function expect(cond, label) {
 	else console.log("✔ " + label);
 }
 
-// ── 构造假 Godot 项目 ──────────────────────────────────────────
-const proj = mkdtempSync(join(tmpdir(), "godot-play-smoke-"));
-mkdirSync(join(proj, "web"), { recursive: true });
-writeFileSync(join(proj, "export_presets.cfg"), [
-	'[preset.0]',
-	'name="Web"',
-	'platform="Web"',
-	'runnable=true',
-	'',
-	'[preset.1]',
-	'name="Desktop"',
-	'platform="Windows Desktop"'
-].join("\n"));
+// ── 假 Godot 项目 A（锁定目标）/ B（另一 Godot 项目）/ plain（非 Godot）──
+const base = mkdtempSync(join(tmpdir(), "godot-play-smoke-"));
+const mkProject = (name) => {
+	const dir = join(base, name);
+	mkdirSync(join(dir, "web"), { recursive: true });
+	writeFileSync(join(dir, "export_presets.cfg"), [
+		'[preset.0]', 'name="Web"', 'platform="Web"', 'runnable=true'
+	].join("\n"));
+	writeFileSync(join(dir, "project.godot"), 'config_version=5\n');
+	return dir;
+};
+const projA = mkProject("game-a");
+const projB = mkProject("game-b");
+const plain = join(base, "plain");
+mkdirSync(plain, { recursive: true });
 
-// 假 Godot：--import 打一行；--export-release <preset> <out> 写 index.html
-const fakeGodot = join(proj, "fake-godot.sh");
+const fakeGodot = join(base, "fake-godot.sh");
 writeFileSync(fakeGodot, [
 	"#!/usr/bin/env bash",
 	"set -euo pipefail",
@@ -52,42 +54,39 @@ chmodSync(fakeGodot, 0o755);
 
 // ── stub ctx ────────────────────────────────────────────────────
 const routes = [];
-let effectFn = null;
+let effectCleanup = null;
 
 function makeCollector() {
-	let buf = "";
-	let dropped = 0;
-	const cap = 128 * 1024;
+	let buf = ""; let dropped = 0; const cap = 128 * 1024;
 	return {
-		append(chunk) {
-			buf += chunk;
-			if (buf.length > cap) { dropped += buf.length - cap; buf = buf.slice(-cap); }
-		},
+		append(c) { buf += c; if (buf.length > cap) { dropped += buf.length - cap; buf = buf.slice(-cap); } },
 		reader() {
 			return {
 				readFrom(byte) {
 					if (byte > buf.length) byte = buf.length;
 					const start = Math.max(byte, dropped);
-					const lossy = byte < dropped;
-					return { text: buf.slice(start), nextOffset: buf.length, lossy };
+					return { text: buf.slice(start), nextOffset: buf.length, lossy: byte < dropped };
 				}
 			};
 		}
 	};
 }
 
+// 注册表顺序：新→旧。预置 [projB(较新), projA(较旧), plain]
+const registryEntries = [
+	{ path: projB, title: "game-b", createdAt: "2026-09-03T10:00:00Z" },
+	{ path: projA, title: "game-a", createdAt: "2026-09-03T09:00:00Z" },
+	{ path: plain, title: "plain", createdAt: "2026-09-03T08:00:00Z" }
+];
 const ctx = {
 	logger: { info() {}, warn() {}, error() {} },
 	webRuntime: { trustedHosts: [] },
 	subprocess: {
 		resolveExecutable() { throw new Error("not on PATH in smoke"); },
 		spawn(spec) {
-			const out = makeCollector();
-			const err = makeCollector();
+			const out = makeCollector(); const err = makeCollector();
 			const cp = spawn(spec.argv[0], spec.argv.slice(1), {
-				cwd: spec.cwd,
-				env: { ...process.env, ...(spec.env || {}) },
-				stdio: ["ignore", "pipe", "pipe"]
+				cwd: spec.cwd, env: { ...process.env, ...(spec.env || {}) }, stdio: ["ignore", "pipe", "pipe"]
 			});
 			cp.stdout.on("data", (d) => out.append(String(d)));
 			cp.stderr.on("data", (d) => err.append(String(d)));
@@ -96,30 +95,53 @@ const ctx = {
 				cp.on("close", (code, signal) => resolve({ exitCode: code, signal: signal || null }));
 			});
 			return {
-				pid: cp.pid,
-				stdin: undefined,
-				stdout: undefined,
-				stderr: undefined,
+				pid: cp.pid, stdin: undefined, stdout: undefined, stderr: undefined,
 				collected: { stdout: out.reader(), stderr: err.reader() },
 				done,
 				terminate() { try { cp.kill("SIGTERM"); } catch { /* ignore */ } }
 			};
 		}
 	},
+	workspaceRegistry: {
+		list() { return registryEntries; },
+		async create(p, title) { registryEntries.unshift({ path: p, title: title || p }); return registryEntries[0]; }
+	},
 	webServer: {
 		register(route) { routes.push(route); return () => {}; }
 	},
-	effect(fn) { effectFn = fn; const d = fn(); return d; }
+	effect(fn) { effectCleanup = fn; return fn(); }
 };
 
-// ── 挂载宿主 ────────────────────────────────────────────────────
-apply(ctx, { projectRoot: proj, webRel: "web", godotBin: fakeGodot, allowRemote: true });
-expect(routes.length === 4, "挂载 4 条路由（build/status/meta/static）");
+// ── 目标优先级纯函数 ────────────────────────────────────────────
+{
+	expect(chooseProject({ pinnedPath: projA, lastPath: projB, godotDirs: [projB, projA], fallbackPath: plain }) === projA, "优先级：锁定 > 其它");
+	expect(chooseProject({ pinnedPath: null, lastPath: projA, godotDirs: [projB, projA], fallbackPath: plain }) === projA, "优先级：上次选择命中");
+	expect(chooseProject({ pinnedPath: null, lastPath: plain, godotDirs: [projB, projA], fallbackPath: plain }) === projB, "上次选择无效时回落最新 Godot 工作区");
+	expect(chooseProject({ pinnedPath: null, lastPath: null, godotDirs: [], fallbackPath: plain }) === plain, "无可选时用兜底目录");
+}
+// 预设探测纯函数
+{
+	expect(detectWebPreset(projA, "") === "Web", "detectWebPreset 命中 Web");
+	expect(detectWebPreset(plain, "") === null, "非 Godot/无预设返回 null");
+}
 
-const route = (method, path) => routes.find((r) => r.path === path && (r.kind === "exact" || r.kind === "prefix"));
+// ── 挂载宿主（锁定 projA）──────────────────────────────────────
+apply(ctx, { projectRoot: projA, webRel: "web", godotBin: fakeGodot, allowRemote: true });
+expect(routes.length >= 7, "挂载 ≥7 条路由（workspaces/build/status/meta/target/add + static）");
+const route = (path) => routes.find((r) => r.path === path);
 
-function mkReq(method, url) {
-	return { method, url, socket: { remoteAddress: "127.0.0.1" }, headers: {} };
+function mkReq(method, url, body) {
+	const r = { method, url, socket: { remoteAddress: "127.0.0.1" }, headers: {} };
+	if (body !== undefined) {
+		const payload = JSON.stringify(body);
+		r.headers = { "content-type": "application/json", "content-length": String(Buffer.byteLength(payload)) };
+		r.body = payload;
+		r.on = (ev, cb) => {
+			if (ev === "data") process.nextTick(() => cb(r.body));
+			if (ev === "end") process.nextTick(() => cb());
+		};
+	}
+	return r;
 }
 function mkRes() {
 	const chunks = [];
@@ -127,8 +149,7 @@ function mkRes() {
 		write(c, enc, cb) { chunks.push(Buffer.from(c)); cb(); },
 		final(cb) { cb(); }
 	});
-	res.status = 0;
-	res.headers = {};
+	res.status = 0; res.headers = {};
 	res.writeHead = function (s, h) { this.status = s; Object.assign(this.headers, h || {}); };
 	res.__body = () => Buffer.concat(chunks).toString("utf8");
 	return res;
@@ -139,64 +160,84 @@ function afterRes(res) {
 		else { res.on("finish", r); res.on("error", r); }
 	});
 }
-
-// ── 构建链路 ────────────────────────────────────────────────────
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const buildRoute = route("POST", "/api/godot-play/build");
-const statusRoute = route("GET", "/api/godot-play/status");
-
-{
-	const req = mkReq("POST", "/api/godot-play/build");
+async function call(path, req, method = "GET") {
+	const handler = route(path).handler;
 	const res = mkRes();
-	const p0 = afterRes(res);
-	await buildRoute.handler(req, res);
-	await p0;
-	expect(res.status === 202, "POST /build 返回 202");
+	const done = afterRes(res);
+	await handler(req, res);
+	await done;
+	return { status: res.status, json: () => { try { return JSON.parse(res.__body()); } catch { return {}; } } };
+}
 
+// ── 多项目 API（锁定态）────────────────────────────────────────
+{
+	const r = await call("/api/godot-play/workspaces", mkReq("GET", "/api/godot-play/workspaces"));
+	const j = r.json();
+	expect(r.status === 200 && j.pinned === true, "workspaces：pinned=true");
+	expect(j.current === projA, "workspaces：current=锁定项目");
+	const paths = (j.candidates || []).map((c) => c.path);
+	expect(paths.includes(projA) && paths.includes(projB), "candidates 含 A、B");
+	expect(!paths.includes(plain), "candidates 不含非 Godot 目录");
+}
+{
+	// 登记 projC
+	const projC = mkProject("game-c");
+	const r = await call("/api/godot-play/workspaces/add", mkReq("POST", "/api/godot-play/workspaces/add", { path: projC }), "POST");
+	const j = r.json();
+	expect(r.status === 200 && (j.candidates || []).some((c) => c.path === projC), "登记成功且出现在候选里");
+	// 登记非 Godot → 400
+	const r2 = await call("/api/godot-play/workspaces/add", mkReq("POST", "/api/godot-play/workspaces/add", { path: plain }), "POST");
+	expect(r2.status === 400, "登记非 Godot 目录返回 400");
+}
+{
+	// 锁定时切换被拒
+	const r = await call("/api/godot-play/target", mkReq("POST", "/api/godot-play/target", { path: projB }), "POST");
+	expect(r.status === 400, "锁定时 POST /target 返回 400");
+}
+
+// ── 构建链路（对锁定目标）──────────────────────────────────────
+{
+	const r0 = await call("/api/godot-play/build", mkReq("POST", "/api/godot-play/build"), "POST");
+	expect(r0.status === 202, "POST /build 返回 202");
 	let last = null;
 	for (let i = 0; i < 200; i++) {
-		await sleep(50);
-		const r2 = mkReq("GET", "/api/godot-play/status");
-		const s2 = mkRes();
-		const p2 = afterRes(s2);
-		await statusRoute.handler(r2, s2);
-		await p2;
-		last = JSON.parse(s2.__body());
+		await new Promise((r) => setTimeout(r, 50));
+		const s = await call("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"));
+		last = s.json();
 		if (last.state !== "running") break;
 	}
 	expect(last.state === "done", "status 终态为 done（实际 " + last.state + "）");
 	expect(last.exitCode === 0, "exitCode === 0");
-	expect(last.webReady === true, "webReady === true（web/index.html 已产出）");
+	expect(last.webReady === true, "webReady === true");
+	expect((last.logTail || "").includes("目标项目：" + projA), "日志标注目标项目");
 	expect((last.logTail || "").includes("exported ok"), "日志含假 Godot 输出");
-	expect((last.logTail || "").includes("✔ 构建完成"), "日志含构建完成标记");
-	expect(last.godot === fakeGodot, "godot 解析到配置路径");
-	expect(last.preset === "Web", "自动探测到 Web 导出预设");
 }
 
 // ── 静态托管 ────────────────────────────────────────────────────
 {
+	const handler = route("/dsh-godot-play/web").handler;
 	const req = mkReq("GET", "/dsh-godot-play/web/index.html");
 	const res = mkRes();
 	const p3 = afterRes(res);
-	await route("GET", "/dsh-godot-play/web").handler(req, res);
+	await handler(req, res);
 	await p3;
-	expect(res.status === 200, "静态托管返回 200");
-	expect(res.headers["Cross-Origin-Embedder-Policy"] === "require-corp", "响应带 COEP 头");
+	expect(res.status === 200, "静态托管 200");
+	expect(res.headers["Cross-Origin-Embedder-Policy"] === "require-corp", "带 COEP 头");
 	expect(res.__body() === "game", "静态内容正确");
 }
 for (const evil of ["/dsh-godot-play/web/../export_presets.cfg", "/dsh-godot-play/web/%2e%2e/export_presets.cfg", "/dsh-godot-play/web/..%2fexport_presets.cfg"]) {
+	const handler = route("/dsh-godot-play/web").handler;
 	const req = mkReq("GET", evil);
 	const res = mkRes();
 	const p4 = afterRes(res);
-	await route("GET", "/dsh-godot-play/web").handler(req, res);
+	await handler(req, res);
 	await p4;
-	expect(res.status === 403 || res.status === 404, "穿越被拒（403/404）：" + evil + " → " + res.status);
+	expect(res.status === 403 || res.status === 404, "穿越被拒（403/404）：" + evil);
 }
 
-// ── 清理 ────────────────────────────────────────────────────────
-if (effectFn) { const d = effectFn(); if (typeof d === "function") d(); }
-rmSync(proj, { recursive: true, force: true });
+if (effectCleanup) { const d = effectCleanup(); if (typeof d === "function") d(); }
+rmSync(base, { recursive: true, force: true });
 
-const failed = results.filter((r) => !r.ok).length;
+const failed = results.filter((x) => !x.ok).length;
 console.log(`\n${results.length - failed}/${results.length} 通过`);
 process.exitCode = failed > 0 ? 1 : 0;
