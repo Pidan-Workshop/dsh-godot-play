@@ -38,20 +38,34 @@ const projB = mkProject("game-b");
 const plain = join(base, "plain");
 mkdirSync(plain, { recursive: true });
 
-const fakeGodot = join(base, "fake-godot.sh");
-writeFileSync(fakeGodot, [
-	"#!/usr/bin/env bash",
-	"set -euo pipefail",
-	'echo "[fake-godot] argv: $*"',
-	'for ((i=1;i<=$#;i++)); do',
-	'  if [ "${!i}" = "--export-release" ]; then',
-	'    out="${@:$((i+2)):1}"',
-	'    printf "game" > "$out"',
-	'  fi',
-	'done',
-	'echo "[fake-godot] exported ok"'
-].join("\n") + "\n");
-chmodSync(fakeGodot, 0o755);
+// 假 Godot：POSIX 用 sh 脚本；Windows 无法直接 spawn .sh，用 .cmd 包一层调 node。
+const isWin = process.platform === "win32";
+const fakeGodot = join(base, isWin ? "fake-godot.cmd" : "fake-godot.sh");
+if (isWin) {
+	writeFileSync(join(base, "fake-godot.js"), [
+		"const fs = require('node:fs');",
+		"const args = process.argv.slice(2);",
+		"console.log('[fake-godot] argv: ' + args.join(' '));",
+		"const i = args.indexOf('--export-release');",
+		"if (i !== -1 && args[i + 2]) fs.writeFileSync(args[i + 2], 'game');",
+		"console.log('[fake-godot] exported ok');"
+	].join("\n") + "\n");
+	writeFileSync(fakeGodot, '@echo off\r\nnode "%~dp0fake-godot.js" %*\r\n');
+} else {
+	writeFileSync(fakeGodot, [
+		"#!/usr/bin/env bash",
+		"set -euo pipefail",
+		'echo "[fake-godot] argv: $*"',
+		'for ((i=1;i<=$#;i++)); do',
+		'  if [ "${!i}" = "--export-release" ]; then',
+		'    out="${@:$((i+2)):1}"',
+		'    printf "game" > "$out"',
+		'  fi',
+		'done',
+		'echo "[fake-godot] exported ok"'
+	].join("\n") + "\n");
+	chmodSync(fakeGodot, 0o755);
+}
 
 // ── stub ctx ────────────────────────────────────────────────────
 const routes = [];
@@ -83,11 +97,13 @@ const ctx = {
 	logger: { info() {}, warn() {}, error() {} },
 	webRuntime: { trustedHosts: [] },
 	subprocess: {
-		resolveExecutable() { throw new Error("not on PATH in smoke"); },
+		// 对齐 dsh-subprocess 契约：resolveExecutable 是 async（返回 Promise<路径>）。
+		async resolveExecutable() { throw new Error("not on PATH in smoke"); },
 		spawn(spec) {
 			const out = makeCollector(); const err = makeCollector();
 			const cp = spawn(spec.argv[0], spec.argv.slice(1), {
-				cwd: spec.cwd, env: { ...process.env, ...(spec.env || {}) }, stdio: ["ignore", "pipe", "pipe"]
+				cwd: spec.cwd, env: { ...process.env, ...(spec.env || {}) }, stdio: ["ignore", "pipe", "pipe"],
+				shell: isWin  // 假 Godot 在 Windows 上是 .cmd；Node 22 拒绝 shell:false 直接 spawn 批处理
 			});
 			cp.stdout.on("data", (d) => out.append(String(d)));
 			cp.stderr.on("data", (d) => err.append(String(d)));
@@ -291,6 +307,41 @@ for (const evil of ["/dsh-godot-play/web/../export_presets.cfg", "/dsh-godot-pla
 	await h(rr, rs);
 	await pd;
 	expect(rs.status === 200 && rs.__body() === "game", "跟随模式静态托管 200");
+}
+
+// ── PATH 解析 Godot（不配 godotBin；resolveExecutable 异步返回路径）─────────
+{
+	const projQ = mkProject("game-q");
+	apply(ctx, { projectRoot: projQ, allowRemote: true });
+	const routeLast = (p) => routes.filter((r) => r.path === p).at(-1);
+	const callLast = async (path, req, method = "GET") => {
+		const handler = routeLast(path).handler;
+		const res = mkRes();
+		const done = afterRes(res);
+		await handler(req, res);
+		await done;
+		return { status: res.status, json: () => { try { return JSON.parse(res.__body()); } catch { return {}; } } };
+	};
+
+	// 回归：旧实现没 await resolveExecutable，把 Promise 当路径塞进 argv → a.includes 崩。
+	const original = ctx.subprocess.resolveExecutable;
+	ctx.subprocess.resolveExecutable = async (cmd) => (cmd === "godot" || cmd === "godot.exe" ? fakeGodot : null);
+	try {
+		const r0 = await callLast("/api/godot-play/build", mkReq("POST", "/api/godot-play/build"), "POST");
+		expect(r0.status === 202, "PATH 解析模式 POST /build 返回 202");
+		let last3 = null;
+		for (let i = 0; i < 200; i++) {
+			await new Promise((r) => setTimeout(r, 50));
+			const s = await callLast("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"));
+			last3 = s.json();
+			if (last3.state !== "running") break;
+		}
+		expect(last3.state === "done", "PATH 解析模式 status 终态 done（实际 " + last3.state + "）");
+		expect((last3.logTail || "").includes("✔ Godot：" + fakeGodot), "日志记录 resolveExecutable 解析出的路径");
+		expect((last3.logTail || "").includes("exported ok"), "PATH 解析模式日志含假 Godot 输出");
+	} finally {
+		ctx.subprocess.resolveExecutable = original;
+	}
 }
 
 if (effectCleanup) { const d = effectCleanup(); if (typeof d === "function") d(); }
