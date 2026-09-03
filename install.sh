@@ -40,7 +40,7 @@ elif [ -s "$TARGET" ]; then
     echo "- insert:"
     echo "    - id: godot-play"
     echo "      name: dsh-godot-play"
-    echo "      inject: [webServer, subprocess, webRuntime]"
+    echo "      inject: [webServer, subprocess, webRuntime, workspace]"
     echo "      config: {}"
   } >> "$TARGET"
   echo "✅ 已在 ${PATCH_FILE} 追加加载器条目"
