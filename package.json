@@ -1,0 +1,30 @@
+{
+  "name": "dsh-godot-play",
+  "version": "0.1.0",
+  "description": "在 DSH Web GUI 内嵌运行 Godot Web 导出（浮动 iframe 试玩面板）",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "client-plugin",
+    "godot",
+    "web"
+  ],
+  "license": "MIT"
+}

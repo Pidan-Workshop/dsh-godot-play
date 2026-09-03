@@ -1,0 +1,6 @@
+# 用户层 patch：dsh-godot-play —— 在 DSH Web GUI 内嵌运行 Godot Web 导出
+# 浏览器 roster 行的约定见 dsh-web-app 的 cordis.patch.yml：
+# 每一条带 dsh.client 元数据的加载器条目都会进入 window.__DSH_BOOT__。
+- insert:
+    - id: godot-play
+      name: dsh-godot-play
