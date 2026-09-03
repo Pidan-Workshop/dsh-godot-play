@@ -2,8 +2,8 @@
 # dsh-godot-play 一键安装：装入 DSH web profile 并登记加载器条目（幂等）。
 #
 # 用法：
-#   bash install.sh                                  # 默认 profile ~/.dsh/profiles/web
-#   DSH_PROFILE_DIR=~/.dsh/profiles/dev bash install.sh   # 指定其它 profile
+#   bash install.sh                                        # 默认 profile：~/.dsh/profiles/web
+#   DSH_PROFILE_DIR=~/.dsh/profiles/dev bash install.sh    # 指定其它 profile
 #
 # 装完需重启 dsh web 生效（会话有持久化，可恢复）。
 set -euo pipefail
@@ -15,21 +15,21 @@ PATCH_FILE="cordis.patch.yml"
 MARKER="id: godot-play"
 
 if [ ! -d "$PROFILE" ]; then
-  echo "❌ 找不到 DSH profile：$PROFILE（可用 DSH_PROFILE_DIR 指定）"
+  echo "❌ 找不到 DSH profile：${PROFILE}（可用 DSH_PROFILE_DIR 指定）"
   exit 1
 fi
 
 # 1) 包本体 → profile 的 node_modules（hoisted 布局：目录即包，放入即可被解析）
-DEST="$PROFILE/node_modules/$PKG_NAME"
+DEST="${PROFILE}/node_modules/${PKG_NAME}"
 rm -rf "$DEST"
 mkdir -p "$DEST"
-cp -R "$HERE/package.json" "$HERE/lib" "$DEST/"
+cp -R "${HERE}/package.json" "${HERE}/lib" "$DEST/"
 echo "✅ 已装入包：$DEST"
 
 # 2) 加载器条目 → profile 的 cordis.patch.yml（幂等）
-TARGET="$PROFILE/$PATCH_FILE"
+TARGET="${PROFILE}/${PATCH_FILE}"
 if [ -f "$TARGET" ] && grep -q "$MARKER" "$TARGET"; then
-  echo "⏭️  $PATCH_FILE 已包含 $MARKER，跳过打补丁"
+  echo "⏭️  ${PATCH_FILE} 已包含 ${MARKER}，跳过打补丁"
 elif [ -s "$TARGET" ]; then
   {
     echo
@@ -38,10 +38,10 @@ elif [ -s "$TARGET" ]; then
     echo "    - id: godot-play"
     echo "      name: dsh-godot-play"
   } >> "$TARGET"
-  echo "✅ 已在 $PATCH_FILE 追加加载器条目"
+  echo "✅ 已在 ${PATCH_FILE} 追加加载器条目"
 else
-  cp "$HERE/$PATCH_FILE" "$TARGET"
-  echo "✅ 已写入 $PATCH_FILE（样例内容）"
+  cp "${HERE}/${PATCH_FILE}" "$TARGET"
+  echo "✅ 已写入 ${PATCH_FILE}（样例内容）"
 fi
 
 echo
