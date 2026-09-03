@@ -100,7 +100,7 @@ Godot 4 Web 导出若开了线程，需要 iframe 文档具备 cross-origin isol
 
 ```sh
 node --check lib/index.js && node --check lib/client.js   # 语法
-node tests/host-smoke.mjs                                  # 宿主端到端冒烟（stub ctx，跑假 Godot，29 断言）
+node tests/host-smoke.mjs                                  # 宿主端到端冒烟（stub ctx，跑假 Godot，42 断言；Windows 下子进程 e2e 段需 bash）
 ```
 
 ## License

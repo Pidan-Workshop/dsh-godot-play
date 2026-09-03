@@ -39,5 +39,17 @@
     "godot",
     "web"
   ],
+  "author": {
+    "name": "Pidan Workshop",
+    "url": "https://github.com/Pidan-Workshop"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pidan-Workshop/dsh-godot-play.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Pidan-Workshop/dsh-godot-play/issues"
+  },
+  "homepage": "https://github.com/Pidan-Workshop/dsh-godot-play",
   "license": "MIT"
 }
