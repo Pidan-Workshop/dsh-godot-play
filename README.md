@@ -21,7 +21,10 @@
 ## 前置（用户责任）
 
 1. 本机安装 Godot，且装好 **Web 导出模板**；
-2. 目标 Godot 项目里存在 **Web 导出预设**（编辑器：项目 → 导出 → 添加… → Web，并保存），输出目标匹配 `webRel`（默认 `<项目>/web/index.html`）。
+2. 目标 Godot 项目里存在 **Web 导出预设**（编辑器：项目 → 导出 → 添加… → Web，并保存）。
+   插件**自动跟随该预设的 `export_path` 目录**（取其在 `export_presets.cfg` 里声明的输出目录，
+   写入 `index.html`），不再要求与 `webRel` 手工对齐；也可用 `config.webRel` 显式覆盖
+   （默认兜底 `<项目>/web`）。
 
 ## 安装
 
@@ -68,7 +71,7 @@ bash install.sh                    # 默认 profile ~/.dsh/profiles/web
 | `projectRoot` | 空（动态） | 留空 = 面板选择 + 智能默认；填写 = **锁定**目标（下拉禁用） |
 | `godotBin` | 自动探测 | `GODOT` 环境变量 → macOS 默认安装路径 → `PATH` |
 | `exportPreset` | 自动 | 从 `export_presets.cfg` 找首个 `platform=="Web"` 预设（优先 runnable） |
-| `webRel` | `web` | 导出输出目录（相对目标项目根） |
+| `webRel` | 空（自动） | 显式填写 = 覆盖输出目录（相对目标项目根）；留空 = 自动跟随 Web 预设的 `export_path` 目录，解析不出时兜底 `web` |
 | `importFirst` | `true` | 导出前先跑一次 `--import` 保证缓存就绪 |
 | `graceMs` | `10000` | 进程终止宽限（毫秒） |
 | `allowRemote` | `false` | 非 loopback 也放行（远程访问 GUI 时按需开启） |
@@ -80,7 +83,7 @@ bash install.sh                    # 默认 profile ~/.dsh/profiles/web
 - `/api/godot-play/*` 写操作带信任围栏：loopback 直通；远端地址须命中
   `ctx.webRuntime.trustedHosts` 或显式开启 `allowRemote`。
 - 无任意命令执行面：argv 由插件按固定顺序拼接（仅 Godot 导出参数），不透传用户命令。
-- 静态托管有路径穿越防护，只服务当前目标 `webRel` 目录内文件。
+- 静态托管有路径穿越防护，只服务当前目标导出目录内文件（目录由 `webRel` / 预设 `export_path` 决定）。
 
 ## 跨域隔离说明
 

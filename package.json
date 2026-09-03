@@ -1,6 +1,6 @@
 {
   "name": "dsh-godot-play",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "在 DeepSeek Harness Web GUI 一键构建并试玩 Godot Web 导出。One-click build & play of Godot Web exports in the DeepSeek Harness GUI.",
   "type": "module",
   "main": "lib/index.js",

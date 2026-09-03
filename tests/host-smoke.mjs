@@ -7,12 +7,12 @@
  *   - 覆盖：锁定配置的构建链路、workspaces 列表/登记、切换被锁拒绝、
  *     目标优先级纯函数、静态托管与路径穿越防护。
  */
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, chmodSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { Writable } from "node:stream";
-import { apply, chooseProject, detectWebPreset } from "../lib/index.js";
+import { apply, chooseProject, detectWebPreset, detectWebExportDir } from "../lib/index.js";
 
 const results = [];
 function expect(cond, label) {
@@ -23,11 +23,12 @@ function expect(cond, label) {
 
 // ── 假 Godot 项目 A（锁定目标）/ B（另一 Godot 项目）/ plain（非 Godot）──
 const base = mkdtempSync(join(tmpdir(), "godot-play-smoke-"));
-const mkProject = (name) => {
+const mkProject = (name, extraPresetLines = []) => {
 	const dir = join(base, name);
 	mkdirSync(join(dir, "web"), { recursive: true });
 	writeFileSync(join(dir, "export_presets.cfg"), [
-		'[preset.0]', 'name="Web"', 'platform="Web"', 'runnable=true'
+		'[preset.0]', 'name="Web"', 'platform="Web"', 'runnable=true',
+		...extraPresetLines
 	].join("\n"));
 	writeFileSync(join(dir, "project.godot"), 'config_version=5\n');
 	return dir;
@@ -123,6 +124,14 @@ const ctx = {
 {
 	expect(detectWebPreset(projA, "") === "Web", "detectWebPreset 命中 Web");
 	expect(detectWebPreset(plain, "") === null, "非 Godot/无预设返回 null");
+	expect(detectWebExportDir(projA, "") === null, "预设无 export_path → null（兜底 web）");
+	expect(detectWebExportDir(plain, "") === null, "非 Godot/无预设 → null");
+	// export_path 目录解析：常规 / res:// 前缀 / 项目根 / 上级逃逸 / 无目录文件名
+	expect(detectWebExportDir(mkProject("dir-1", ['export_path="build/web/index.html"']), "") === "build/web", "取 export_path 目录 build/web");
+	expect(detectWebExportDir(mkProject("dir-2", ['export_path="res://dist/web/index.html"']), "") === "dist/web", "容忍 res:// 前缀");
+	expect(detectWebExportDir(mkProject("dir-3", ['export_path="web"']), "") === null, "export_path 指向目录本身（非文件）→ null");
+	expect(detectWebExportDir(mkProject("dir-4", ['export_path="index.html"']), "") === null, "项目根文件名 → null（拒绝托管项目根）");
+	expect(detectWebExportDir(mkProject("dir-5", ['export_path="../evil/index.html"']), "") === null, "上级逃逸 → null");
 }
 
 // ── 挂载宿主（锁定 projA）──────────────────────────────────────
@@ -243,6 +252,45 @@ for (const evil of ["/dsh-godot-play/web/../export_presets.cfg", "/dsh-godot-pla
 	await handler(req, res);
 	await p4;
 	expect(res.status === 403 || res.status === 404, "穿越被拒（403/404）：" + evil);
+}
+
+// ── webRel 自动跟随 export_presets.cfg（不配 webRel 的第二个宿主实例）──
+{
+	const projP = mkProject("game-p", ['export_path="build/web/index.html"']);
+	apply(ctx, { projectRoot: projP, godotBin: fakeGodot, allowRemote: true });
+	// 后注册实例的路由（同路径先注册的先命中，故取最后一个）
+	const routeLast = (p) => routes.filter((r) => r.path === p).at(-1);
+	const callLast = async (path, req, method = "GET") => {
+		const handler = routeLast(path).handler;
+		const res = mkRes();
+		const done = afterRes(res);
+		await handler(req, res);
+		await done;
+		return { status: res.status, json: () => { try { return JSON.parse(res.__body()); } catch { return {}; } } };
+	};
+
+	const r0 = await callLast("/api/godot-play/build", mkReq("POST", "/api/godot-play/build"), "POST");
+	expect(r0.status === 202, "跟随模式 POST /build 返回 202");
+	let last2 = null;
+	for (let i = 0; i < 200; i++) {
+		await new Promise((r) => setTimeout(r, 50));
+		const s = await callLast("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"));
+		last2 = s.json();
+		if (last2.state !== "running") break;
+	}
+	expect(last2.state === "done", "跟随模式 status 终态 done（实际 " + last2.state + "）");
+	expect(last2.webReady === true, "跟随模式 webReady === true");
+	const outPath = join(projP, "build", "web", "index.html");
+	expect(existsSync(outPath), "产物落在预设 export_path 目录：" + outPath);
+	expect((last2.logTail || "").includes("构建完成：" + outPath), "日志标注输出路径=" + outPath);
+
+	const h = routeLast("/dsh-godot-play/web").handler;
+	const rr = mkReq("GET", "/dsh-godot-play/web/index.html");
+	const rs = mkRes();
+	const pd = afterRes(rs);
+	await h(rr, rs);
+	await pd;
+	expect(rs.status === 200 && rs.__body() === "game", "跟随模式静态托管 200");
 }
 
 if (effectCleanup) { const d = effectCleanup(); if (typeof d === "function") d(); }

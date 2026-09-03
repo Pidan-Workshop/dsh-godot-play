@@ -13,7 +13,7 @@
       #   projectRoot: /Users/you/MyGodotGame
       #   godotBin: /Applications/Godot.app/Contents/MacOS/Godot
       #   exportPreset: Web
-      #   webRel: web
+      #   webRel: build/web   # 留空（默认）= 自动跟随导出预设 export_path 的目录；显式填则覆盖
       #   importFirst: true
       #   graceMs: 10000
       #   allowRemote: false
