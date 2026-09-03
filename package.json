@@ -1,7 +1,7 @@
 {
   "name": "dsh-godot-play",
-  "version": "0.1.0",
-  "description": "在 DSH Web GUI 内嵌运行 Godot Web 导出（浮动 iframe 试玩面板）",
+  "version": "0.2.0",
+  "description": "在 DSH Web GUI 一键构建并试玩 Godot Web 导出：宿主半区直接跑 Godot 导出，装完即用、零外部进程",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -11,13 +11,26 @@
     "./client": {
       "default": "./lib/client.js"
     },
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "inject": [],
       "platform": "web"
     }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "scripts": {
+    "test": "node tests/host-smoke.mjs"
   },
   "keywords": [
     "dsh",

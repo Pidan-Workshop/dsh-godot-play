@@ -1,6 +1,18 @@
-# 用户层 patch：dsh-godot-play —— 在 DSH Web GUI 内嵌运行 Godot Web 导出
-# 浏览器 roster 行的约定见 dsh-web-app 的 cordis.patch.yml：
-# 每一条带 dsh.client 元数据的加载器条目都会进入 window.__DSH_BOOT__。
+# dsh-godot-play bundle patch：宿主半区注入 webServer/subprocess/webRuntime 三个服务，
+# 挂同源 /api/godot-play/*（build/status/meta）与 /dsh-godot-play/web/*
+# （静态托管 web 导出，带 cross-origin isolation 头）。
+# 浏览器半区经 package.json 的 dsh.client 声明随同一行被发现。
 - insert:
     - id: godot-play
       name: dsh-godot-play
+      inject: [webServer, subprocess, webRuntime]
+      # 默认全自动：项目根取 dsh 进程工作目录；Godot 与 Web 导出预设自动探测。
+      # 需要覆盖时在此提供，例如：
+      #   projectRoot: /Users/you/MyGodotGame
+      #   godotBin: /Applications/Godot.app/Contents/MacOS/Godot
+      #   exportPreset: Web
+      #   webRel: web
+      #   importFirst: true
+      #   graceMs: 10000
+      #   allowRemote: false
+      config: {}

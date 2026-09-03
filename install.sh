@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# dsh-godot-play 一键安装：装入 DSH web profile 并登记加载器条目（幂等）。
+# dsh-godot-play 安装脚本（手动路径；推荐优先用官方 CLI：
+#   dsh plugin --profile web add dsh-godot-play        # npm 发布后
+#   dsh plugin --profile web add /path/to/dsh-godot-play  # 本地目录
+# ）
 #
 # 用法：
 #   bash install.sh                                        # 默认 profile：~/.dsh/profiles/web
@@ -23,7 +26,7 @@ fi
 DEST="${PROFILE}/node_modules/${PKG_NAME}"
 rm -rf "$DEST"
 mkdir -p "$DEST"
-cp -R "${HERE}/package.json" "${HERE}/lib" "$DEST/"
+cp -R "${HERE}/package.json" "${HERE}/lib" "${HERE}/${PATCH_FILE}" "$DEST/"
 echo "✅ 已装入包：$DEST"
 
 # 2) 加载器条目 → profile 的 cordis.patch.yml（幂等）
@@ -37,13 +40,15 @@ elif [ -s "$TARGET" ]; then
     echo "- insert:"
     echo "    - id: godot-play"
     echo "      name: dsh-godot-play"
+    echo "      inject: [webServer, subprocess, webRuntime]"
+    echo "      config: {}"
   } >> "$TARGET"
   echo "✅ 已在 ${PATCH_FILE} 追加加载器条目"
 else
-  cp "${HERE}/${PATCH_FILE}" "$TARGET"
+  cat "${HERE}/${PATCH_FILE}" > "$TARGET"
   echo "✅ 已写入 ${PATCH_FILE}（样例内容）"
 fi
 
 echo
-echo "完成。重启 dsh web 后生效；GUI 右下角应出现「▶ 试玩游戏」按钮。"
+echo "完成。重启 dsh web 后生效；GUI 右下角应出现「▶ 试玩游戏」，面板内可「🔄 构建并加载」。"
 echo "提示：pnpm install 会清理手工放置的包，重装依赖后请重跑本脚本。"
