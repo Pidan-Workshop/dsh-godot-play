@@ -1,6 +1,6 @@
 {
   "name": "dsh-godot-play",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "在 DSH Web GUI 一键构建并试玩 Godot Web 导出：宿主半区直接跑 Godot 导出，装完即用、零外部进程",
   "type": "module",
   "main": "lib/index.js",
