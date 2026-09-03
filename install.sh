@@ -40,7 +40,7 @@ elif [ -s "$TARGET" ]; then
     echo "- insert:"
     echo "    - id: godot-play"
     echo "      name: dsh-godot-play"
-    echo "      inject: [webServer, subprocess, webRuntime, workspace]"
+    echo "      inject: [webServer, subprocess, webRuntime, workspaceRegistry]"
     echo "      config: {}"
   } >> "$TARGET"
   echo "✅ 已在 ${PATCH_FILE} 追加加载器条目"
@@ -48,6 +48,10 @@ else
   cat "${HERE}/${PATCH_FILE}" > "$TARGET"
   echo "✅ 已写入 ${PATCH_FILE}（样例内容）"
 fi
+
+# 自愈：早期版本把服务名误写成 workspace（实际为 workspaceRegistry，见 dsh-workspace 包），
+# 会让加载器永远等待一个不存在的服务而无法激活。就地修正历史追加行；无匹配则无副作用。
+sed -i '' 's/inject: \[webServer, subprocess, webRuntime, workspace\]/inject: [webServer, subprocess, webRuntime, workspaceRegistry]/' "$TARGET"
 
 echo
 echo "完成。重启 dsh web 后生效；GUI 右下角应出现「▶ 试玩游戏」，面板内可「🔄 构建并加载」。"

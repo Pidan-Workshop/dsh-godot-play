@@ -127,7 +127,7 @@ const ctx = {
 
 // ── 挂载宿主（锁定 projA）──────────────────────────────────────
 apply(ctx, { projectRoot: projA, webRel: "web", godotBin: fakeGodot, allowRemote: true });
-expect(routes.length >= 7, "挂载 ≥7 条路由（workspaces/build/status/meta/target/add + static）");
+expect(routes.length >= 8, "挂载 ≥8 条路由（workspaces/build/status/logs-clear/meta/target/add + static）");
 const route = (path) => routes.find((r) => r.path === path);
 
 function mkReq(method, url, body) {
@@ -211,6 +211,16 @@ async function call(path, req, method = "GET") {
 	expect(last.webReady === true, "webReady === true");
 	expect((last.logTail || "").includes("目标项目：" + projA), "日志标注目标项目");
 	expect((last.logTail || "").includes("exported ok"), "日志含假 Godot 输出");
+}
+
+// ── 清空日志 ────────────────────────────────────────────────────
+{
+	const before = (await call("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"))).json();
+	expect((before.logTail || "").length > 0, "清空前日志非空");
+	const r = await call("/api/godot-play/logs/clear", mkReq("POST", "/api/godot-play/logs/clear"), "POST");
+	expect(r.status === 200 && r.json().ok === true, "POST /logs/clear 返回 ok");
+	const after = (await call("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"))).json();
+	expect((after.logTail || "") === "", "清空后 logTail 为空");
 }
 
 // ── 静态托管 ────────────────────────────────────────────────────

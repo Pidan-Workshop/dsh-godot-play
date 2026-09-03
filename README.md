@@ -4,7 +4,7 @@
 
 - 浏览器半区：右下角浮动「▶ 试玩游戏」面板，内含「项目」下拉（多项目切换）、
   「🔄 构建并加载」按钮、状态芯片与构建日志；
-- 宿主（Node）半区：注入 `webServer` / `subprocess` / `webRuntime` / `workspace`
+- 宿主（Node）半区：注入 `webServer` / `subprocess` / `webRuntime` / `workspaceRegistry`
   四个宿主服务，直接以 `ctx.subprocess.spawn` 运行 `godot --headless --export-release`，
   并把当前项目的 `web/` 导出以**同源前缀路由**静态托管（响应带 cross-origin isolation 头）。
 
@@ -15,6 +15,7 @@
 
 - **多项目**：面板下拉列出 `workspaceRegistry` 里的 Godot 项目（自动过滤含 `project.godot` 的目录），可「＋」手动登记其它目录；
 - **目标优先级**：config `projectRoot`（锁定）> 上次选择（持久化到 `~/.dsh/dsh-godot-play.json`）> 最新创建的 Godot 工作区 > 从 dsh 工作目录向上找 `project.godot` > 工作目录本身；
+- **随手控制**：「↻ 重新启动」带缓存戳重载当前游戏 iframe（不重新构建）；「清空日志」把宿主内存尾环与屏幕显示一起清掉（构建进行中也可清，新输出照常追加）；
 - 纯 DOM，零框架依赖；iframe 懒加载；构建日志尾环；幂等安装/卸载脚本。
 
 ## 前置（用户责任）
@@ -42,7 +43,8 @@ bash install.sh                    # 默认 profile ~/.dsh/profiles/web
 1. GUI 右下角「▶ 试玩游戏」打开面板；
 2. 需要的话在「项目」下拉切换目标（或点「＋」登记新项目目录）；
 3. 点「🔄 构建并加载」：状态芯片显示进度，展开「日志」看 Godot 输出；
-4. 成功后 iframe 自动带缓存戳重载，直接试玩；下次打开自动记住上次选的项目。
+4. 成功后 iframe 自动带缓存戳重载，直接试玩；下次打开自动记住上次选的项目；
+5. 想重新开始当前游戏点「↻ 重新启动」（只重载游戏，不重新构建）；点「清空日志」清掉构建日志（构建中也可清）。
 
 ## 宿主接口（同源路由）
 
@@ -53,6 +55,7 @@ bash install.sh                    # 默认 profile ~/.dsh/profiles/web
 | `/api/godot-play/target` | POST | 切换目标项目（`{path}`；config 锁定时返回 400） |
 | `/api/godot-play/build` | POST | 对当前目标触发构建（单飞，构建中返回 409） |
 | `/api/godot-play/status` | GET | 状态 + 日志尾环（轮询即进度） |
+| `/api/godot-play/logs/clear` | POST | 清空内存中的构建日志尾环（构建中也可清，新输出照常追加） |
 | `/api/godot-play/meta` | GET | 就绪探测（project / webReady / godot / preset） |
 | `/dsh-godot-play/web/*` | GET | 静态托管当前目标的 `web/` 导出（带 COEP/COOP 头） |
 
@@ -94,7 +97,7 @@ Godot 4 Web 导出若开了线程，需要 iframe 文档具备 cross-origin isol
 
 ```sh
 node --check lib/index.js && node --check lib/client.js   # 语法
-node tests/host-smoke.mjs                                  # 宿主端到端冒烟（stub ctx，跑假 Godot，26 断言）
+node tests/host-smoke.mjs                                  # 宿主端到端冒烟（stub ctx，跑假 Godot，29 断言）
 ```
 
 ## License

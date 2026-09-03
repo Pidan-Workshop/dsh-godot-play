@@ -1,11 +1,13 @@
-# dsh-godot-play bundle patch：宿主半区注入 webServer/subprocess/webRuntime 三个服务，
+# dsh-godot-play bundle patch：宿主半区注入 webServer/subprocess/webRuntime/workspaceRegistry 四个服务，
 # 挂同源 /api/godot-play/*（build/status/meta）与 /dsh-godot-play/web/*
 # （静态托管 web 导出，带 cross-origin isolation 头）。
+# 注：workspaceRegistry 是 dsh-workspace 提供的服务名（ctx.workspaceRegistry 的 `.list/.create`）；
+#     它在 dsh-web-app bundle 里的行 id 叫 workspace，但服务名并非 workspace。
 # 浏览器半区经 package.json 的 dsh.client 声明随同一行被发现。
 - insert:
     - id: godot-play
       name: dsh-godot-play
-      inject: [webServer, subprocess, webRuntime]
+      inject: [webServer, subprocess, webRuntime, workspaceRegistry]
       # 默认全自动：项目根取 dsh 进程工作目录；Godot 与 Web 导出预设自动探测。
       # 需要覆盖时在此提供，例如：
       #   projectRoot: /Users/you/MyGodotGame
