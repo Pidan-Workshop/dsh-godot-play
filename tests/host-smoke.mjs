@@ -135,6 +135,10 @@ const ctx = {
 	expect(chooseProject({ pinnedPath: null, lastPath: projA, godotDirs: [projB, projA], fallbackPath: plain }) === projA, "优先级：上次选择命中");
 	expect(chooseProject({ pinnedPath: null, lastPath: plain, godotDirs: [projB, projA], fallbackPath: plain }) === projB, "上次选择无效时回落最新 Godot 工作区");
 	expect(chooseProject({ pinnedPath: null, lastPath: null, godotDirs: [], fallbackPath: plain }) === plain, "无可选时用兜底目录");
+	// 跟随（/follow 写入的当前工作区）插在锁定与上次选择之间
+	expect(chooseProject({ pinnedPath: projA, followPath: projB, lastPath: null, godotDirs: [projB], fallbackPath: plain }) === projA, "优先级：锁定 > 跟随");
+	expect(chooseProject({ pinnedPath: null, followPath: projB, lastPath: projA, godotDirs: [projA, projB], fallbackPath: plain }) === projB, "优先级：跟随 > 上次选择");
+	expect(chooseProject({ pinnedPath: null, followPath: null, lastPath: projA, godotDirs: [projA, projB], fallbackPath: plain }) === projA, "优先级：无跟随时回落到上次选择");
 }
 // 预设探测纯函数
 {
@@ -152,7 +156,7 @@ const ctx = {
 
 // ── 挂载宿主（锁定 projA）──────────────────────────────────────
 apply(ctx, { projectRoot: projA, webRel: "web", godotBin: fakeGodot, allowRemote: true });
-expect(routes.length >= 8, "挂载 ≥8 条路由（workspaces/build/status/logs-clear/meta/target/add + static）");
+expect(routes.length >= 10, "挂载 ≥10 条路由（workspaces/add/target/follow/build/status/logs-clear/meta/probe + static）");
 const route = (path) => routes.find((r) => r.path === path);
 
 function mkReq(method, url, body) {
@@ -218,6 +222,39 @@ async function call(path, req, method = "GET") {
 	// 锁定时切换被拒
 	const r = await call("/api/godot-play/target", mkReq("POST", "/api/godot-play/target", { path: projB }), "POST");
 	expect(r.status === 400, "锁定时 POST /target 返回 400");
+}
+
+// ── 工作区门控探测（浏览器半区据此显隐入口按钮）─────────────────
+{
+	const probe = (url) => call("/api/godot-play/probe", mkReq("GET", url));
+	const q = (p) => "/api/godot-play/probe?path=" + encodeURIComponent(p);
+
+	const rA = await probe(q(projA));
+	const jA = rA.json();
+	expect(rA.status === 200 && jA.isGodot === true, "probe：Godot 项目 → isGodot=true");
+	expect(jA.path === projA, "probe：回传解析后的绝对路径");
+
+	const rP = await probe(q(plain));
+	expect(rP.status === 200 && rP.json().isGodot === false, "probe：非 Godot 目录 → isGodot=false");
+
+	const rGhost = await probe(q(join(base, "no-such-dir")));
+	expect(rGhost.status === 200 && rGhost.json().isGodot === false, "probe：不存在的目录 → isGodot=false（不抛）");
+
+	const rMissing = await probe("/api/godot-play/probe");
+	expect(rMissing.status === 400, "probe：缺 path → 400");
+
+	const rBlank = await probe("/api/godot-play/probe?path=%20%20");
+	expect(rBlank.status === 400, "probe：空白 path → 400");
+
+	const m = await call("/api/godot-play/meta", mkReq("GET", "/api/godot-play/meta"));
+	expect(m.json().workspaceGate === true, "meta：workspaceGate 默认=true（门控开启）");
+
+	// 锁定 projectRoot 时：/follow 不改目标，回 pinned 让浏览器半区停手
+	const rf = await call("/api/godot-play/follow", mkReq("POST", "/api/godot-play/follow", { path: projB }), "POST");
+	const jf = rf.json();
+	expect(rf.status === 200 && jf.pinned === true && jf.current === projA, "锁定态 /follow：回 pinned 且目标不变");
+	const st = await call("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"));
+	expect(st.json().project === projA && st.json().source === "pinned", "锁定态 status：project/source=pinned");
 }
 
 // ── 构建链路（对锁定目标）──────────────────────────────────────
@@ -342,6 +379,73 @@ for (const evil of ["/dsh-godot-play/web/../export_presets.cfg", "/dsh-godot-pla
 	} finally {
 		ctx.subprocess.resolveExecutable = original;
 	}
+}
+
+// ── 工作区门控：可整体关掉 + 信任围栏 ───────────────────────────
+{
+	const routeLast = (p) => routes.filter((r) => r.path === p).at(-1);
+	const callLast = async (path, req) => {
+		const handler = routeLast(path).handler;
+		const res = mkRes();
+		const done = afterRes(res);
+		await handler(req, res);
+		await done;
+		return { status: res.status, json: () => { try { return JSON.parse(res.__body()); } catch { return {}; } } };
+	};
+
+	apply(ctx, { projectRoot: projA, godotBin: fakeGodot, workspaceGate: false });
+	const m = await callLast("/api/godot-play/meta", mkReq("GET", "/api/godot-play/meta"));
+	expect(m.json().workspaceGate === false, "meta：workspaceGate=false 透传（面板退回常显）");
+
+	// 默认 allowRemote=false：非 loopback 的探测被拒（只读端点也走信任围栏）
+	apply(ctx, { projectRoot: projA, godotBin: fakeGodot });
+	const req = mkReq("GET", "/api/godot-play/probe?path=" + encodeURIComponent(projA));
+	req.socket.remoteAddress = "10.1.2.3";
+	const r = await callLast("/api/godot-play/probe", req);
+	expect(r.status === 403, "probe：非信任来源 → 403");
+}
+
+// ── 目标跟随当前工作区（不锁 projectRoot 的实例）────────────────
+{
+	const projF = mkProject("game-follow"); // 跟随目标（B 之外再加一个，避免与前面断言耦合）
+	apply(ctx, { godotBin: fakeGodot, allowRemote: true });
+	const routeLast = (p) => routes.filter((r) => r.path === p).at(-1);
+	const callLast = async (path, req) => {
+		const handler = routeLast(path).handler;
+		const res = mkRes();
+		const done = afterRes(res);
+		await handler(req, res);
+		await done;
+		return { status: res.status, json: () => { try { return JSON.parse(res.__body()); } catch { return {}; } } };
+	};
+	const follow = (body) => callLast("/api/godot-play/follow", mkReq("POST", "/api/godot-play/follow", body), "POST");
+	const status = async () => (await callLast("/api/godot-play/status", mkReq("GET", "/api/godot-play/status"))).json();
+
+	const r1 = await follow({ path: projF });
+	const j1 = r1.json();
+	expect(r1.status === 200 && j1.followed === true && j1.current === projF && j1.changed === true, "follow：报告当前工作区 → 目标跟随");
+	const s1 = await status();
+	expect(s1.project === projF && s1.source === "follow", "follow 后 status：project=工作区，source=follow");
+
+	const r2 = await follow({ path: projF });
+	expect(r2.json().changed === false, "follow：同一路径重复上报 → changed=false（浏览器半区据此不重载 iframe）");
+
+	const r3 = await follow({ path: plain });
+	expect(r3.status === 400, "follow：非 Godot 目录 → 400");
+	expect((await status()).project === projF, "follow 被拒后目标不变");
+
+	const r4 = await follow({});
+	expect(r4.status === 400, "follow：缺 path → 400");
+
+	const r5 = await follow({ path: projB });
+	expect(r5.json().current === projB, "follow：可切换跟随目标");
+
+	// 信任围栏：非 loopback 且未开 allowRemote 时拒绝
+	apply(ctx, { godotBin: fakeGodot });
+	const reqRemote = mkReq("POST", "/api/godot-play/follow", { path: projF });
+	reqRemote.socket.remoteAddress = "10.9.9.9";
+	const r6 = await callLast("/api/godot-play/follow", reqRemote);
+	expect(r6.status === 403, "follow：非信任来源 → 403");
 }
 
 if (effectCleanup) { const d = effectCleanup(); if (typeof d === "function") d(); }

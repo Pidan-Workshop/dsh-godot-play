@@ -1,9 +1,10 @@
 # dsh-godot-play bundle patch：宿主半区注入 webServer/subprocess/webRuntime/workspaceRegistry 四个服务，
-# 挂同源 /api/godot-play/*（build/status/meta）与 /dsh-godot-play/web/*
+# 挂同源 /api/godot-play/*（build/status/meta/probe）与 /dsh-godot-play/web/*
 # （静态托管 web 导出，带 cross-origin isolation 头）。
 # 注：workspaceRegistry 是 dsh-workspace 提供的服务名（ctx.workspaceRegistry 的 `.list/.create`）；
 #     它在 dsh-web-app bundle 里的行 id 叫 workspace，但服务名并非 workspace。
-# 浏览器半区经 package.json 的 dsh.client 声明随同一行被发现。
+# 浏览器半区经 package.json 的 dsh.client 声明随同一行被发现；
+# 入口按钮的显隐由 /api/godot-play/probe 判定（只在 Godot 项目工作区显示，见 config.workspaceGate）。
 - insert:
     - id: godot-play
       name: dsh-godot-play
@@ -17,4 +18,5 @@
       #   importFirst: true
       #   graceMs: 10000
       #   allowRemote: false
+      #   workspaceGate: false  # 关掉「只在 Godot 项目工作区显示入口按钮」的门控（默认 true）
       config: {}
