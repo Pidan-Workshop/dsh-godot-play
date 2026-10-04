@@ -35,17 +35,20 @@
 ## 安装
 
 ```sh
-# 推荐：官方插件 CLI（npm 发布后）
-dsh plugin --profile web add dsh-godot-play
+# 官方插件 CLI（已在 npm 发布）
+dsh plugin --profile <profile> add dsh-godot-play
 
-# 本地开发：直接指向仓库目录
-dsh plugin --profile web add /path/to/dsh-godot-play
+# 本地开发：直接指向仓库目录（改完代码重启即生效，无需重装）
+dsh plugin --profile <profile> add /path/to/dsh-godot-play
 
-# 或手动装入（等价动作，见 install.sh）
+# 或手动装入（等价动作，见包内 install.sh）
 bash install.sh                    # 默认 profile ~/.dsh/profiles/web
 ```
 
-装完**重启 dsh web** 生效（会话有持久化，可恢复）。
+> `<profile>` 例：`web`（`dsh web`）或 `desktop`（桌面端）。
+> **桌面端用的是保留 profile，CLI 要求先完全退出桌面端**再执行，否则会撞上 profile 的文件锁。
+
+装完**重启对应的 dsh** 生效（会话有持久化，可恢复）。
 
 ## 使用
 
